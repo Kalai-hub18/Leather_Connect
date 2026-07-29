@@ -1,0 +1,200 @@
+import { JobStatus, Prisma, VerificationStatus } from '@prisma/client';
+import { prisma } from '@/config/prisma';
+import { AppError } from '@/middleware/error-handler';
+import { RequestContext } from '@/types/request-context';
+import { CreateJobInput } from '../schemas/job.schemas';
+import { evaluate, EligibilityRules, StudentFacts } from './eligibility-engine';
+
+export const jobService = {
+  /** Step 1 — HR drafts a job and submits it for coordinator review. */
+  async create(input: CreateJobInput, ctx: RequestContext) {
+    if (!ctx.companyId) {
+      throw new AppError(403, 'NO_COMPANY', 'Only an HR account tied to a company can post jobs');
+    }
+
+    // §9.5 — the Jobs module never checks HR-to-college directly; it asks
+    // whether an approved link exists for (this HR's company, target college).
+    const link = await prisma.collegeCompanyLink.findUnique({
+      where: { collegeId_companyId: { collegeId: input.collegeId, companyId: ctx.companyId } },
+    });
+
+    if (link?.status !== VerificationStatus.APPROVED) {
+      throw new AppError(
+        403,
+        'COMPANY_NOT_APPROVED',
+        'Your company is not approved to post to this college yet',
+      );
+    }
+
+    return prisma.job.create({
+      data: {
+        collegeId: input.collegeId,
+        companyId: ctx.companyId,
+        postedByUserId: ctx.userId,
+        title: input.title,
+        description: input.description,
+        type: input.type,
+        location: input.location,
+        packageLpa: input.packageLpa,
+        stipend: input.stipend,
+        deadline: input.deadline,
+        status: JobStatus.PENDING_APPROVAL,
+        eligibility: {
+          create: {
+            minCgpa: input.eligibility.minCgpa,
+            maxBacklogs: input.eligibility.maxBacklogs,
+            departmentIds: input.eligibility.departmentIds,
+            batchYears: input.eligibility.batchYears,
+            requiredSkills: input.eligibility.requiredSkills,
+          },
+        },
+      },
+      include: { eligibility: true, company: true },
+    });
+  },
+
+  /**
+   * Step 2 — coordinator approves. Publishing evaluates eligibility against
+   * every placement-ready student in scope in one batched read (§9.7), then
+   * reports who matched. Notification dispatch is the follow-on phase.
+   */
+  async approve(jobId: string, ctx: RequestContext) {
+    const job = await prisma.job.findUnique({ where: { id: jobId }, include: { eligibility: true } });
+
+    if (!job || job.deletedAt) {
+      throw new AppError(404, 'JOB_NOT_FOUND', 'Job not found');
+    }
+    if (job.collegeId !== ctx.collegeId) {
+      throw new AppError(403, 'FORBIDDEN', 'This job belongs to another college');
+    }
+    if (job.status !== JobStatus.PENDING_APPROVAL) {
+      throw new AppError(409, 'INVALID_STATE', `Cannot approve a job in ${job.status}`);
+    }
+
+    const published = await prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status: JobStatus.PUBLISHED,
+        approvedByUserId: ctx.userId,
+        publishedAt: new Date(),
+      },
+      include: { eligibility: true },
+    });
+
+    const matched = await this.matchEligibleStudents(jobId);
+
+    return { job: published, eligibleCount: matched.length, eligibleStudentIds: matched };
+  },
+
+  async reject(jobId: string, reason: string, ctx: RequestContext) {
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+
+    if (!job || job.deletedAt) {
+      throw new AppError(404, 'JOB_NOT_FOUND', 'Job not found');
+    }
+    if (job.collegeId !== ctx.collegeId) {
+      throw new AppError(403, 'FORBIDDEN', 'This job belongs to another college');
+    }
+    if (job.status !== JobStatus.PENDING_APPROVAL) {
+      throw new AppError(409, 'INVALID_STATE', `Cannot reject a job in ${job.status}`);
+    }
+
+    // Reverting to DRAFT lets HR revise and resubmit (UC-2 alternate path).
+    return prisma.job.update({
+      where: { id: jobId },
+      data: { status: JobStatus.DRAFT, description: `${job.description}\n\n[Coordinator] ${reason}` },
+    });
+  },
+
+  /** Batched evaluation — one read for all students, then a pure map. */
+  async matchEligibleStudents(jobId: string): Promise<string[]> {
+    const job = await prisma.job.findUnique({ where: { id: jobId }, include: { eligibility: true } });
+    if (!job?.eligibility) return [];
+
+    const students = await prisma.studentProfile.findMany({
+      where: { collegeId: job.collegeId, placementReady: true, deletedAt: null },
+    });
+
+    const rules = toRules(job.eligibility);
+
+    return students.filter((s) => evaluate(rules, toFacts(s)).eligible).map((s) => s.id);
+  },
+
+  /** Student-facing board: published, in-deadline jobs for their college. */
+  async listPublished(ctx: RequestContext) {
+    return prisma.job.findMany({
+      where: {
+        collegeId: ctx.collegeId ?? undefined,
+        status: JobStatus.PUBLISHED,
+        deletedAt: null,
+        deadline: { gte: new Date() },
+      },
+      include: { company: true, eligibility: true, _count: { select: { applications: true } } },
+      orderBy: { publishedAt: 'desc' },
+    });
+  },
+
+  /** Coordinator review queue. */
+  async listPendingApproval(ctx: RequestContext) {
+    return prisma.job.findMany({
+      where: { collegeId: ctx.collegeId ?? undefined, status: JobStatus.PENDING_APPROVAL, deletedAt: null },
+      include: { company: true, eligibility: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  },
+
+  /** Colleges whose link to this HR's company has been approved. */
+  async listApprovedColleges(ctx: RequestContext) {
+    if (!ctx.companyId) return [];
+
+    const links = await prisma.collegeCompanyLink.findMany({
+      where: { companyId: ctx.companyId, status: VerificationStatus.APPROVED },
+      include: { college: { select: { id: true, name: true } } },
+    });
+
+    return links.map((l) => l.college);
+  },
+
+  /** HR's own postings across colleges. */
+  async listForCompany(ctx: RequestContext) {
+    return prisma.job.findMany({
+      where: { companyId: ctx.companyId ?? undefined, deletedAt: null },
+      include: { college: true, eligibility: true, _count: { select: { applications: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+};
+
+export function toRules(e: {
+  minCgpa: Prisma.Decimal | null;
+  maxBacklogs: number | null;
+  departmentIds: string[];
+  batchYears: number[];
+  requiredSkills: string[];
+}): EligibilityRules {
+  return {
+    minCgpa: e.minCgpa,
+    maxBacklogs: e.maxBacklogs,
+    departmentIds: e.departmentIds,
+    batchYears: e.batchYears,
+    requiredSkills: e.requiredSkills,
+  };
+}
+
+export function toFacts(s: {
+  departmentId: string;
+  batchYear: number;
+  cgpa: Prisma.Decimal;
+  activeBacklogs: number;
+  skills: string[];
+  placementReady: boolean;
+}): StudentFacts {
+  return {
+    departmentId: s.departmentId,
+    batchYear: s.batchYear,
+    cgpa: s.cgpa,
+    activeBacklogs: s.activeBacklogs,
+    skills: s.skills,
+    placementReady: s.placementReady,
+  };
+}

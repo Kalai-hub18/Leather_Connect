@@ -1,0 +1,376 @@
+// LeatherConnect Placements — Prisma schema
+// Scope: the core hiring loop (HR posts job → coordinator approves → student
+// applies → interview rounds → offer). Models outside this flow (documents,
+// events, announcements, notification preferences) land in full Phase 2.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  SUPER_ADMIN
+  COLLEGE_ADMIN
+  /// Faculty placement officer — approves jobs, screens applications, and
+  /// gates interview results before students see them.
+  PLACEMENT_OFFICER
+  /// Student volunteer on the placement cell. Sees who has and hasn't applied
+  /// and runs drive logistics, but never individual CGPA, resumes or results —
+  /// they are a peer of the students they'd otherwise be reading.
+  STUDENT_COORDINATOR
+  HR
+  STUDENT
+  ALUMNI
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum JobType {
+  INTERNSHIP
+  GRADUATE_TRAINEE
+  FULL_TIME
+  WALK_IN
+  OFF_CAMPUS
+  REFERRAL
+  CONTRACT
+  PART_TIME
+}
+
+enum JobStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  CLOSED
+  CANCELLED
+}
+
+/// Fixed application state machine (FR-7.2). Forward-only transitions, plus
+/// the two terminal exits REJECTED and WITHDRAWN.
+enum ApplicationStatus {
+  APPLIED
+  SCREENING
+  SHORTLISTED
+  WRITTEN_TEST
+  TECHNICAL_INTERVIEW
+  HR_INTERVIEW
+  SELECTED
+  REJECTED
+  WITHDRAWN
+  JOINED
+}
+
+enum InterviewRoundType {
+  WRITTEN_TEST
+  TECHNICAL
+  HR
+  MANAGERIAL
+}
+
+enum AttendanceStatus {
+  PENDING
+  PRESENT
+  ABSENT
+}
+
+enum RoundOutcome {
+  PENDING
+  ADVANCED
+  REJECTED
+}
+
+// ---------------------------------------------------------------- tenancy
+
+model College {
+  id        String    @id @default(uuid())
+  name      String
+  domain    String?
+  logoUrl   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  users       User[]
+  departments Department[]
+  jobs        Job[]
+  links       CollegeCompanyLink[]
+}
+
+model Department {
+  id        String    @id @default(uuid())
+  collegeId String
+  name      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  college          College           @relation(fields: [collegeId], references: [id])
+  studentProfiles  StudentProfile[]
+
+  @@index([collegeId])
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  passwordHash     String
+  fullName         String
+  role             Role
+  collegeId        String?
+  companyId        String?
+  emailVerifiedAt  DateTime?
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  college College? @relation(fields: [collegeId], references: [id])
+  company Company? @relation(fields: [companyId], references: [id])
+
+  studentProfile  StudentProfile?
+  postedJobs      Job[]                      @relation("JobPostedBy")
+  approvedJobs    Job[]                      @relation("JobApprovedBy")
+  releasedRounds  InterviewRound[]           @relation("RoundReleasedBy")
+  statusChanges   ApplicationStatusHistory[]
+  recommendations AlumniRecommendation[]
+
+  @@index([collegeId])
+  @@index([companyId])
+  @@index([role])
+}
+
+model Company {
+  id        String             @id @default(uuid())
+  name      String
+  industry  String?
+  website   String?
+  logoUrl   String?
+  status    VerificationStatus @default(PENDING)
+  createdAt DateTime           @default(now())
+  deletedAt DateTime?
+
+  users User[]
+  jobs  Job[]
+  links CollegeCompanyLink[]
+
+  @@index([status])
+}
+
+/// A company reaches a college only through an approved link (§9.5). The Jobs
+/// module checks this join, never HR-to-college directly.
+model CollegeCompanyLink {
+  id         String             @id @default(uuid())
+  collegeId  String
+  companyId  String
+  status     VerificationStatus @default(PENDING)
+  approvedAt DateTime?
+  createdAt  DateTime           @default(now())
+
+  college College @relation(fields: [collegeId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([collegeId, companyId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------- students
+
+model StudentProfile {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  collegeId      String
+  departmentId   String
+  rollNumber     String
+  batchYear      Int
+  cgpa           Decimal   @db.Decimal(4, 2)
+  activeBacklogs Int       @default(0)
+  skills         String[]
+  resumeUrl      String?
+  /// Coordinator gate (FR-5.2) — must be true before the student can apply.
+  placementReady Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  user         User          @relation(fields: [userId], references: [id])
+  department   Department    @relation(fields: [departmentId], references: [id])
+  applications Application[]
+
+  @@index([collegeId, placementReady])
+  @@index([departmentId])
+  @@index([batchYear])
+}
+
+// ---------------------------------------------------------------- jobs
+
+model Job {
+  id             String    @id @default(uuid())
+  collegeId      String
+  companyId      String
+  postedByUserId String
+  approvedByUserId String?
+
+  title       String
+  description String
+  type        JobType
+  location    String?
+  packageLpa  Decimal?  @db.Decimal(6, 2)
+  stipend     String?
+  status      JobStatus @default(DRAFT)
+  deadline    DateTime
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  college    College @relation(fields: [collegeId], references: [id])
+  company    Company @relation(fields: [companyId], references: [id])
+  postedBy   User    @relation("JobPostedBy", fields: [postedByUserId], references: [id])
+  approvedBy User?   @relation("JobApprovedBy", fields: [approvedByUserId], references: [id])
+
+  eligibility  JobEligibility?
+  applications Application[]
+  rounds       InterviewRound[]
+
+  @@index([collegeId, status])
+  @@index([companyId])
+  @@index([deadline])
+}
+
+/// Structured criteria rows, not a JSON blob — keeps eligibility queryable and
+/// the engine independently testable (§9.7).
+model JobEligibility {
+  id             String   @id @default(uuid())
+  jobId          String   @unique
+  minCgpa        Decimal? @db.Decimal(4, 2)
+  maxBacklogs    Int?
+  departmentIds  String[]
+  batchYears     Int[]
+  requiredSkills String[]
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------- applications
+
+model Application {
+  id               String            @id @default(uuid())
+  jobId            String
+  studentProfileId String
+  collegeId        String
+  status           ApplicationStatus @default(APPLIED)
+
+  /// Snapshot at apply-time so later profile edits don't rewrite history (UC-3).
+  cgpaSnapshot   Decimal @db.Decimal(4, 2)
+  resumeUrlSnapshot String?
+
+  appliedAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  job     Job            @relation(fields: [jobId], references: [id])
+  student StudentProfile @relation(fields: [studentProfileId], references: [id])
+
+  history         ApplicationStatusHistory[]
+  roundResults    InterviewRoundResult[]
+  recommendations AlumniRecommendation[]
+
+  @@unique([jobId, studentProfileId])
+  @@index([collegeId, status])
+  @@index([studentProfileId])
+}
+
+/// Append-only ledger. Analytics reads from here rather than a mutable status
+/// field, so on-screen and exported numbers can't drift (§9.8, §9.12).
+model ApplicationStatusHistory {
+  id            String             @id @default(uuid())
+  applicationId String
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  actorUserId   String
+  note          String?
+  createdAt     DateTime           @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  actor       User        @relation(fields: [actorUserId], references: [id])
+
+  @@index([applicationId, createdAt])
+}
+
+// ---------------------------------------------------------------- interviews
+
+model InterviewRound {
+  id           String             @id @default(uuid())
+  jobId        String
+  sequence     Int
+  type         InterviewRoundType
+  scheduledAt  DateTime
+  venue        String?
+  meetingLink  String?
+  interviewers String[]
+
+  /// HR has finished the round — statuses advance, but students still see
+  /// "Under review" until the placement officer releases.
+  resultsPublishedAt DateTime?
+  /// The officer's release. Until this is set, students are not shown the
+  /// outcome. `releasedByUserId` records who took responsibility for it.
+  resultsReleasedAt  DateTime?
+  releasedByUserId   String?
+
+  createdAt DateTime @default(now())
+
+  job        Job                    @relation(fields: [jobId], references: [id])
+  releasedBy User?                  @relation("RoundReleasedBy", fields: [releasedByUserId], references: [id])
+  results    InterviewRoundResult[]
+
+  @@unique([jobId, sequence])
+  @@index([scheduledAt])
+  /// Drives the SLA reminder: published but not yet released.
+  @@index([resultsPublishedAt, resultsReleasedAt])
+}
+
+model InterviewRoundResult {
+  id            String           @id @default(uuid())
+  roundId       String
+  applicationId String
+  attendance    AttendanceStatus @default(PENDING)
+  rating        Int?
+  feedback      String?
+  outcome       RoundOutcome     @default(PENDING)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  round       InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  application Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([roundId, applicationId])
+  @@index([applicationId])
+}
+
+// ---------------------------------------------------------------- alumni
+
+/// An endorsement attaches to an application that already exists, so alumni
+/// participate in the core loop without the full P3 referral module.
+model AlumniRecommendation {
+  id            String   @id @default(uuid())
+  applicationId String
+  alumniUserId  String
+  note          String
+  createdAt     DateTime @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  alumni      User        @relation(fields: [alumniUserId], references: [id])
+
+  @@unique([applicationId, alumniUserId])
+  @@index([alumniUserId])
+}
