@@ -1,12 +1,19 @@
 import { api } from './client';
 import type {
   ApplicantRow,
+  AppNotification,
   Application,
   ApplicationStatus,
   AttendanceStatus,
+  CollegeOverview,
   InterviewRound,
   InterviewRoundType,
   Job,
+  PendingProfile,
+  PendingRecruiter,
+  RecruiterOverview,
+  StudentOverview,
+  StudentProfile,
   PendingRelease,
   RosterRow,
   RoundOutcome,
@@ -86,4 +93,64 @@ export const interviewsApi = {
 
   awaitingRelease: () => api.get<PendingRelease[]>('/interviews/awaiting-release'),
   release: (roundId: string) => api.post(`/interviews/rounds/${roundId}/release`),
+};
+
+export const companiesApi = {
+  directory: () => api.get<{ id: string; name: string; industry: string | null }[]>('/companies/directory'),
+  colleges: () => api.get<{ id: string; name: string }[]>('/companies/colleges'),
+
+  register: (body: {
+    fullName: string;
+    email: string;
+    password: string;
+    collegeId: string;
+    companyId?: string;
+    company?: {
+      name: string;
+      industry?: string;
+      website?: string;
+      location?: string;
+      description?: string;
+    };
+  }) => api.post<{ userId: string; companyId: string; status: string }>('/companies/register', body),
+
+  pending: () => api.get<PendingRecruiter[]>('/companies/pending'),
+
+  decide: (linkId: string, approved: boolean, reason?: string) =>
+    api.post(`/companies/links/${linkId}/decision`, { approved, reason }),
+};
+
+export const studentsApi = {
+  me: () => api.get<StudentProfile>('/students/me'),
+
+  update: (body: {
+    phone?: string;
+    about?: string;
+    skills?: string[];
+    linkedinUrl?: string;
+    githubUrl?: string;
+    portfolioUrl?: string;
+    resumeUrl?: string;
+    resumeFileName?: string;
+  }) => api.patch<StudentProfile>('/students/me', body),
+
+  submit: () => api.post('/students/me/submit'),
+
+  pendingReview: () => api.get<PendingProfile[]>('/students/pending-review'),
+
+  decide: (id: string, approved: boolean, note?: string) =>
+    api.post(`/students/${id}/decision`, { approved, note }),
+};
+
+export const analyticsApi = {
+  college: () => api.get<CollegeOverview>('/analytics/college'),
+  student: () => api.get<StudentOverview>('/analytics/student'),
+  recruiter: () => api.get<RecruiterOverview>('/analytics/recruiter'),
+};
+
+export const notificationsApi = {
+  list: () => api.get<AppNotification[]>('/notifications'),
+  unreadCount: () => api.get<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string) => api.post(`/notifications/${id}/read`),
+  markAllRead: () => api.post('/notifications/read-all'),
 };

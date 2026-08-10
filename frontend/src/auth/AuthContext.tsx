@@ -36,11 +36,11 @@ export function useAuth() {
 
 /** Where each role lands after signing in. */
 export const HOME_BY_ROLE: Record<AuthUser['role'], string> = {
-  STUDENT: '/student/jobs',
-  HR: '/hr/jobs',
-  PLACEMENT_OFFICER: '/officer/approvals',
+  STUDENT: '/student/home',
+  HR: '/hr/home',
+  PLACEMENT_OFFICER: '/officer/home',
   STUDENT_COORDINATOR: '/cell/roster',
   ALUMNI: '/alumni/endorse',
-  COLLEGE_ADMIN: '/officer/approvals',
-  SUPER_ADMIN: '/officer/approvals',
+  COLLEGE_ADMIN: '/officer/home',
+  SUPER_ADMIN: '/officer/home',
 };

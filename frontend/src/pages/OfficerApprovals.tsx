@@ -51,7 +51,9 @@ export function OfficerApprovals() {
         loading={queue.loading}
         error={queue.error}
         empty={jobs.length === 0}
-        emptyMessage="Nothing waiting for review."
+        emptyIcon="check"
+        emptyTitle="All clear"
+        emptyMessage="No job postings waiting on you."
         onRetry={queue.reload}
       >
         <div className="stack-sm">
@@ -62,7 +64,7 @@ export function OfficerApprovals() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-5)', flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: 300 }}>
                     <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 6 }}>
-                      <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>{job.title}</h3>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 600, letterSpacing: '-0.015em', margin: 0 }}>{job.title}</h3>
                       <Badge tone="neutral">{humanize(job.type)}</Badge>
                     </div>
                     <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>

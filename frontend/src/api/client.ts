@@ -64,7 +64,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const err = body?.error;
-    if (res.status === 401) session.clear();
+
+    // An expired or invalidated token can't be recovered from in-page — every
+    // subsequent call would 401 too. Drop the session and land on /login rather
+    // than leaving the user on a screen that silently fails to load.
+    if (res.status === 401) {
+      session.clear();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.replace('/login?expired=1');
+      }
+    }
+
     throw new ApiError(res.status, err?.code ?? 'UNKNOWN', err?.message ?? 'Request failed');
   }
 

@@ -1,8 +1,13 @@
+import { Icon } from './Icon';
+
 export function AsyncBlock({
   loading,
   error,
   empty,
   emptyMessage = 'Nothing here yet.',
+  emptyTitle,
+  emptyIcon = 'file',
+  emptyAction,
   onRetry,
   children,
 }: {
@@ -10,6 +15,9 @@ export function AsyncBlock({
   error: string | null;
   empty?: boolean;
   emptyMessage?: string;
+  emptyTitle?: string;
+  emptyIcon?: string;
+  emptyAction?: React.ReactNode;
   onRetry?: () => void;
   children: React.ReactNode;
 }) {
@@ -25,11 +33,14 @@ export function AsyncBlock({
 
   if (error) {
     return (
-      <div className="state-block error">
-        <div className="state-title">Couldn't load this</div>
-        <div>{error}</div>
+      <div className="empty-state">
+        <div className="empty-state-icon" style={{ color: 'var(--critical)' }}>
+          <Icon name="file" size={20} />
+        </div>
+        <div className="empty-state-title">Couldn't load this</div>
+        <div className="empty-state-body">{error}</div>
         {onRetry && (
-          <button className="btn btn-secondary btn-sm" style={{ marginTop: 'var(--space-4)' }} onClick={onRetry}>
+          <button className="btn btn-secondary btn-sm" onClick={onRetry}>
             Try again
           </button>
         )}
@@ -38,7 +49,16 @@ export function AsyncBlock({
   }
 
   if (empty) {
-    return <div className="state-block">{emptyMessage}</div>;
+    return (
+      <div className="empty-state">
+        <div className="empty-state-icon">
+          <Icon name={emptyIcon} size={20} />
+        </div>
+        {emptyTitle && <div className="empty-state-title">{emptyTitle}</div>}
+        <div className="empty-state-body">{emptyMessage}</div>
+        {emptyAction}
+      </div>
+    );
   }
 
   return <>{children}</>;

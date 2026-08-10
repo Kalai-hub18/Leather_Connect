@@ -40,7 +40,9 @@ export function AlumniEndorse() {
         loading={jobs.loading}
         error={jobs.error}
         empty={jobList.length === 0}
-        emptyMessage="No open drives at your college right now."
+        emptyIcon="briefcase"
+        emptyTitle="No open drives"
+        emptyMessage="When your college opens a drive, you can endorse candidates here."
         onRetry={jobs.reload}
       >
         <label className="field" style={{ maxWidth: 420 }}>

@@ -1,33 +1,56 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { NotificationBell } from '../components/NotificationBell';
+import { Icon } from '../components/Icon';
 import { humanize } from '../api/types';
 
-const NAV: Record<string, { to: string; label: string }[]> = {
+interface NavItem {
+  to: string;
+  label: string;
+  icon: string;
+}
+
+const NAV: Record<string, NavItem[]> = {
   STUDENT: [
-    { to: '/student/jobs', label: 'Job Board' },
-    { to: '/student/applications', label: 'My Applications' },
+    { to: '/student/home', label: 'Overview', icon: 'home' },
+    { to: '/student/jobs', label: 'Job Board', icon: 'briefcase' },
+    { to: '/student/applications', label: 'My Applications', icon: 'file' },
+    { to: '/student/profile', label: 'My Profile', icon: 'user' },
   ],
-  HR: [{ to: '/hr/jobs', label: 'Job Postings' }],
+  HR: [
+    { to: '/hr/home', label: 'Overview', icon: 'home' },
+    { to: '/hr/jobs', label: 'Job Postings', icon: 'briefcase' },
+  ],
   PLACEMENT_OFFICER: [
-    { to: '/officer/approvals', label: 'Job Approvals' },
-    { to: '/officer/applications', label: 'Drive Progress' },
-    { to: '/officer/results', label: 'Results to Release' },
-    { to: '/officer/roster', label: 'Drive Roster' },
+    { to: '/officer/home', label: 'Overview', icon: 'home' },
+    { to: '/officer/approvals', label: 'Job Approvals', icon: 'check' },
+    { to: '/officer/results', label: 'Results to Release', icon: 'send' },
+    { to: '/officer/recruiters', label: 'Recruiter Access', icon: 'building' },
+    { to: '/officer/profiles', label: 'Student Profiles', icon: 'user' },
+    { to: '/officer/applications', label: 'Drive Progress', icon: 'chart' },
+    { to: '/officer/roster', label: 'Drive Roster', icon: 'clipboard' },
   ],
   COLLEGE_ADMIN: [
-    { to: '/officer/approvals', label: 'Job Approvals' },
-    { to: '/officer/applications', label: 'Drive Progress' },
-    { to: '/officer/results', label: 'Results to Release' },
+    { to: '/officer/home', label: 'Overview', icon: 'home' },
+    { to: '/officer/approvals', label: 'Job Approvals', icon: 'check' },
+    { to: '/officer/results', label: 'Results to Release', icon: 'send' },
+    { to: '/officer/applications', label: 'Drive Progress', icon: 'chart' },
   ],
-  STUDENT_COORDINATOR: [{ to: '/cell/roster', label: 'Drive Roster' }],
-  ALUMNI: [{ to: '/alumni/endorse', label: 'Endorse a Candidate' }],
-  SUPER_ADMIN: [{ to: '/officer/approvals', label: 'Job Approvals' }],
+  STUDENT_COORDINATOR: [{ to: '/cell/roster', label: 'Drive Roster', icon: 'clipboard' }],
+  ALUMNI: [{ to: '/alumni/endorse', label: 'Endorse a Candidate', icon: 'users' }],
+  SUPER_ADMIN: [{ to: '/officer/home', label: 'Overview', icon: 'home' }],
 };
 
 export function AppShell() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Navigating on a phone should dismiss the drawer, not leave it covering
+  // the page the user just asked for.
+  useEffect(() => setMenuOpen(false), [location.pathname]);
 
   if (!user) return null;
 
@@ -43,7 +66,9 @@ export function AppShell() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {menuOpen && <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
+
+      <aside className={`sidebar${menuOpen ? ' open' : ''}`}>
         <div className="sidebar-brand">
           <div className="brand-mark">LC</div>
           <div className="brand-text">
@@ -59,7 +84,7 @@ export function AppShell() {
               to={item.to}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
-              <span className="nav-dot" />
+              <Icon name={item.icon} />
               {item.label}
             </NavLink>
           ))}
@@ -81,11 +106,25 @@ export function AppShell() {
 
       <div className="main">
         <header className="topbar">
+          <button
+            className="mobile-menu-btn"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+
           <div className="topbar-crumbs">
             {humanize(user.role)} <span style={{ opacity: 0.4 }}>/</span>{' '}
             <strong>{current?.label ?? 'Overview'}</strong>
           </div>
           <div className="topbar-user">
+            <NotificationBell />
             <div style={{ textAlign: 'right' }}>
               <div className="topbar-name">{user.fullName}</div>
               <div className="topbar-role">{user.email}</div>

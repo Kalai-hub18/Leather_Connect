@@ -41,7 +41,14 @@ export function HrJobs() {
         loading={jobs.loading}
         error={jobs.error}
         empty={(jobs.data ?? []).length === 0}
-        emptyMessage="No postings yet. Create your first one."
+        emptyIcon="briefcase"
+        emptyTitle="No postings yet"
+        emptyMessage="Create a posting and the placement officer reviews it before students see it."
+        emptyAction={
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
+            Post a job
+          </button>
+        }
         onRetry={jobs.reload}
       >
         <Card padded={false}>

@@ -1,7 +1,8 @@
-import { JobStatus, Prisma, VerificationStatus } from '@prisma/client';
+import { JobStatus, NotificationType, Prisma, Role, VerificationStatus } from '@prisma/client';
 import { prisma } from '@/config/prisma';
 import { AppError } from '@/middleware/error-handler';
 import { RequestContext } from '@/types/request-context';
+import { notificationService } from '@/modules/notifications/services/notification.service';
 import { CreateJobInput } from '../schemas/job.schemas';
 import { evaluate, EligibilityRules, StudentFacts } from './eligibility-engine';
 
@@ -26,7 +27,7 @@ export const jobService = {
       );
     }
 
-    return prisma.job.create({
+    const job = await prisma.job.create({
       data: {
         collegeId: input.collegeId,
         companyId: ctx.companyId,
@@ -51,6 +52,38 @@ export const jobService = {
       },
       include: { eligibility: true, company: true },
     });
+
+    await this.notifyOfficers(
+      input.collegeId,
+      NotificationType.JOB_PENDING_APPROVAL,
+      'A job needs your approval',
+      `${job.company.name} posted "${job.title}".`,
+      '/officer/approvals',
+    );
+
+    return job;
+  },
+
+  /** Fan a notice out to everyone who can act on it at a college. */
+  async notifyOfficers(
+    collegeId: string,
+    type: NotificationType,
+    title: string,
+    body: string,
+    link: string,
+  ) {
+    const officers = await prisma.user.findMany({
+      where: {
+        collegeId,
+        role: { in: [Role.PLACEMENT_OFFICER, Role.COLLEGE_ADMIN] },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    await notificationService.dispatch(
+      officers.map((o) => ({ userId: o.id, type, title, body, link })),
+    );
   },
 
   /**
@@ -83,6 +116,30 @@ export const jobService = {
 
     const matched = await this.matchEligibleStudents(jobId);
 
+    // FR-6.3 — every eligible student hears about it. Fetch the user ids behind
+    // the matched profiles in one read rather than per student.
+    if (matched.length > 0) {
+      const profiles = await prisma.studentProfile.findMany({
+        where: { id: { in: matched } },
+        select: { userId: true },
+      });
+
+      const company = await prisma.company.findUnique({
+        where: { id: published.companyId },
+        select: { name: true },
+      });
+
+      await notificationService.dispatch(
+        profiles.map((p) => ({
+          userId: p.userId,
+          type: NotificationType.JOB_PUBLISHED,
+          title: `New opening: ${published.title}`,
+          body: `${company?.name ?? 'A recruiter'} is hiring. Applications close ${published.deadline.toLocaleDateString()}.`,
+          link: '/student/jobs',
+        })),
+      );
+    }
+
     return { job: published, eligibleCount: matched.length, eligibleStudentIds: matched };
   },
 
@@ -100,10 +157,20 @@ export const jobService = {
     }
 
     // Reverting to DRAFT lets HR revise and resubmit (UC-2 alternate path).
-    return prisma.job.update({
+    const updated = await prisma.job.update({
       where: { id: jobId },
-      data: { status: JobStatus.DRAFT, description: `${job.description}\n\n[Coordinator] ${reason}` },
+      data: { status: JobStatus.DRAFT, description: `${job.description}\n\n[Officer] ${reason}` },
     });
+
+    await notificationService.dispatch({
+      userId: job.postedByUserId,
+      type: NotificationType.JOB_PENDING_APPROVAL,
+      title: `Changes requested on "${job.title}"`,
+      body: reason,
+      link: '/hr/jobs',
+    });
+
+    return updated;
   },
 
   /** Batched evaluation — one read for all students, then a pure map. */

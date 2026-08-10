@@ -11,6 +11,10 @@ import { authRoutes } from '@/modules/auth/routes/auth.routes';
 import { jobRoutes } from '@/modules/jobs/routes/job.routes';
 import { applicationRoutes } from '@/modules/applications/routes/application.routes';
 import { interviewRoutes } from '@/modules/interviews/routes/interview.routes';
+import { notificationRoutes } from '@/modules/notifications/routes/notification.routes';
+import { analyticsRoutes } from '@/modules/analytics/routes/analytics.routes';
+import { studentRoutes } from '@/modules/students/routes/student.routes';
+import { companyRoutes } from '@/modules/companies/routes/company.routes';
 
 export function createApp() {
   const app = express();
@@ -34,6 +38,10 @@ export function createApp() {
   app.use('/api/jobs', jobRoutes);
   app.use('/api/applications', applicationRoutes);
   app.use('/api/interviews', interviewRoutes);
+  app.use('/api/notifications', notificationRoutes);
+  app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/students', studentRoutes);
+  app.use('/api/companies', companyRoutes);
 
   app.use(errorHandler);
 

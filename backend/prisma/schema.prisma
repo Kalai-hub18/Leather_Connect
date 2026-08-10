@@ -88,6 +88,17 @@ enum RoundOutcome {
   REJECTED
 }
 
+enum NotificationType {
+  JOB_PUBLISHED
+  APPLICATION_RECEIVED
+  STATUS_CHANGED
+  INTERVIEW_SCHEDULED
+  RESULT_RELEASED
+  JOB_PENDING_APPROVAL
+  ENDORSEMENT_RECEIVED
+  PROFILE_APPROVED
+}
+
 // ---------------------------------------------------------------- tenancy
 
 model College {
@@ -142,6 +153,7 @@ model User {
   releasedRounds  InterviewRound[]           @relation("RoundReleasedBy")
   statusChanges   ApplicationStatusHistory[]
   recommendations AlumniRecommendation[]
+  notifications   Notification[]
 
   @@index([collegeId])
   @@index([companyId])
@@ -149,13 +161,18 @@ model User {
 }
 
 model Company {
-  id        String             @id @default(uuid())
-  name      String
-  industry  String?
-  website   String?
-  logoUrl   String?
-  status    VerificationStatus @default(PENDING)
-  createdAt DateTime           @default(now())
+  id          String             @id @default(uuid())
+  name        String
+  industry    String?
+  website     String?
+  logoUrl     String?
+  description String?
+  location    String?
+  status      VerificationStatus @default(PENDING)
+  /// Why an officer turned the company down, shown back to the recruiter.
+  rejectionReason String?
+
+  createdAt DateTime  @default(now())
   deletedAt DateTime?
 
   users User[]
@@ -168,12 +185,13 @@ model Company {
 /// A company reaches a college only through an approved link (§9.5). The Jobs
 /// module checks this join, never HR-to-college directly.
 model CollegeCompanyLink {
-  id         String             @id @default(uuid())
-  collegeId  String
-  companyId  String
-  status     VerificationStatus @default(PENDING)
-  approvedAt DateTime?
-  createdAt  DateTime           @default(now())
+  id              String             @id @default(uuid())
+  collegeId       String
+  companyId       String
+  status          VerificationStatus @default(PENDING)
+  approvedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime           @default(now())
 
   college College @relation(fields: [collegeId], references: [id])
   company Company @relation(fields: [companyId], references: [id])
@@ -185,21 +203,33 @@ model CollegeCompanyLink {
 // ---------------------------------------------------------------- students
 
 model StudentProfile {
-  id             String    @id @default(uuid())
-  userId         String    @unique
+  id             String  @id @default(uuid())
+  userId         String  @unique
   collegeId      String
   departmentId   String
   rollNumber     String
   batchYear      Int
-  cgpa           Decimal   @db.Decimal(4, 2)
-  activeBacklogs Int       @default(0)
+  cgpa           Decimal @db.Decimal(4, 2)
+  activeBacklogs Int     @default(0)
   skills         String[]
-  resumeUrl      String?
-  /// Coordinator gate (FR-5.2) — must be true before the student can apply.
+
+  phone       String?
+  about       String?
+  linkedinUrl String?
+  githubUrl   String?
+  portfolioUrl String?
+  resumeUrl   String?
+  resumeFileName String?
+
+  /// Officer gate (FR-5.2) — must be true before the student can apply.
   placementReady Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
+  /// Set when the student submits for review; cleared on approve/reject.
+  submittedForReviewAt DateTime?
+  reviewNote     String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
   user         User          @relation(fields: [userId], references: [id])
   department   Department    @relation(fields: [departmentId], references: [id])
@@ -208,6 +238,8 @@ model StudentProfile {
   @@index([collegeId, placementReady])
   @@index([departmentId])
   @@index([batchYear])
+  /// Officer's profile-approval queue.
+  @@index([collegeId, submittedForReviewAt])
 }
 
 // ---------------------------------------------------------------- jobs
@@ -355,6 +387,28 @@ model InterviewRoundResult {
 
   @@unique([roundId, applicationId])
   @@index([applicationId])
+}
+
+// ---------------------------------------------------------------- notifications
+
+/// In-app rows are written first and always succeed (§9.10) — email and push
+/// are best-effort side effects layered on top later.
+model Notification {
+  id     String           @id @default(uuid())
+  userId String
+  type   NotificationType
+  title  String
+  body   String
+  /// Where clicking it should land, e.g. /student/applications.
+  link   String?
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
 }
 
 // ---------------------------------------------------------------- alumni

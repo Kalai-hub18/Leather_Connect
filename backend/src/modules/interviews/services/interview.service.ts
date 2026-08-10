@@ -2,12 +2,15 @@ import {
   ApplicationStatus,
   AttendanceStatus,
   InterviewRoundType,
+  NotificationType,
   RoundOutcome,
 } from '@prisma/client';
 import { prisma } from '@/config/prisma';
 import { AppError } from '@/middleware/error-handler';
 import { RequestContext } from '@/types/request-context';
 import { applicationService } from '@/modules/applications/services/application.service';
+import { jobService } from '@/modules/jobs/services/job.service';
+import { notificationService } from '@/modules/notifications/services/notification.service';
 
 /** How long an officer may sit on a published result before it's flagged. */
 export const RELEASE_SLA_HOURS = 48;
@@ -81,7 +84,7 @@ export const interviewService = {
       );
     }
 
-    return prisma.interviewRound.create({
+    const round = await prisma.interviewRound.create({
       data: {
         jobId,
         sequence: input.sequence,
@@ -96,6 +99,26 @@ export const interviewService = {
       },
       include: { results: true },
     });
+
+    // FR-8.2 — everyone pulled into the round is told when and where.
+    const candidates = await prisma.application.findMany({
+      where: { id: { in: applications.map((a) => a.id) } },
+      include: { student: { select: { userId: true } } },
+    });
+
+    const where = input.venue ?? input.meetingLink ?? 'Details to follow';
+
+    await notificationService.dispatch(
+      candidates.map((c) => ({
+        userId: c.student.userId,
+        type: NotificationType.INTERVIEW_SCHEDULED,
+        title: `Interview scheduled — ${job.title}`,
+        body: `Round ${input.sequence} on ${input.scheduledAt.toLocaleString()}. ${where}.`,
+        link: '/student/applications',
+      })),
+    );
+
+    return round;
   },
 
   /** Step 6b — attendance and structured feedback per candidate (FR-8.3). */
@@ -192,6 +215,9 @@ export const interviewService = {
           to,
           ctx,
           `Round ${round.sequence} (${round.type}) result`,
+          // Silent by design — students hear about this when the officer
+          // releases the round, not when the recruiter finishes it.
+          { suppressStudentNotification: true },
         );
       }
     }
@@ -200,6 +226,14 @@ export const interviewService = {
       where: { id: roundId },
       data: { resultsPublishedAt: new Date() },
     });
+
+    await jobService.notifyOfficers(
+      round.job.collegeId,
+      NotificationType.RESULT_RELEASED,
+      'Results waiting for your release',
+      `Round ${round.sequence} of "${round.job.title}" is assessed. Students see nothing until you release it.`,
+      '/officer/results',
+    );
 
     const isRejection = (t: { path: ApplicationStatus[] }) =>
       t.path[t.path.length - 1] === ApplicationStatus.REJECTED;
@@ -237,10 +271,23 @@ export const interviewService = {
       throw new AppError(409, 'ALREADY_RELEASED', 'Results are already visible to students');
     }
 
-    return prisma.interviewRound.update({
+    const released = await prisma.interviewRound.update({
       where: { id: roundId },
       data: { resultsReleasedAt: new Date(), releasedByUserId: ctx.userId },
     });
+
+    // The outcome was withheld while the round sat unreleased, so this is the
+    // first the student hears of it — send from their current status.
+    const results = await prisma.interviewRoundResult.findMany({
+      where: { roundId },
+      include: { application: { select: { id: true, status: true } } },
+    });
+
+    for (const r of results) {
+      await applicationService.notifyStudentOfStatus(r.application.id, r.application.status);
+    }
+
+    return released;
   },
 
   /**

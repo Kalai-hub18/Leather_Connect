@@ -46,7 +46,9 @@ export function OfficerResults() {
         loading={pending.loading}
         error={pending.error}
         empty={rounds.length === 0}
-        emptyMessage="Nothing waiting. Every published result has been released."
+        emptyIcon="send"
+        emptyTitle="Nothing to release"
+        emptyMessage="Every result a recruiter has finished is already visible to students."
         onRetry={pending.reload}
       >
         <div className="stack-sm">
@@ -63,7 +65,7 @@ export function OfficerResults() {
               >
                 <div>
                   <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 6 }}>
-                    <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>{r.jobTitle}</h3>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 600, letterSpacing: '-0.015em', margin: 0 }}>{r.jobTitle}</h3>
                     <Badge tone="neutral">
                       Round {r.sequence} · {humanize(r.type)}
                     </Badge>

@@ -150,6 +150,124 @@ export interface InterviewRound {
   results: RoundResult[];
 }
 
+export interface PendingRecruiter {
+  linkId: string;
+  requestedAt: string;
+  company: {
+    id: string;
+    name: string;
+    industry: string | null;
+    website: string | null;
+    location: string | null;
+    description: string | null;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    priorDrives: number;
+  };
+  recruiters: { id: string; fullName: string; email: string; createdAt: string }[];
+}
+
+export interface StudentProfile {
+  id: string;
+  rollNumber: string;
+  batchYear: number;
+  cgpa: string;
+  activeBacklogs: number;
+  skills: string[];
+  phone: string | null;
+  about: string | null;
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  portfolioUrl: string | null;
+  resumeUrl: string | null;
+  resumeFileName: string | null;
+  placementReady: boolean;
+  submittedForReviewAt: string | null;
+  reviewNote: string | null;
+  user: { fullName: string; email: string };
+  department: { name: string };
+  completeness: { percent: number; missing: string[] };
+}
+
+export interface PendingProfile {
+  id: string;
+  rollNumber: string;
+  batchYear: number;
+  cgpa: string;
+  activeBacklogs: number;
+  skills: string[];
+  about: string | null;
+  resumeUrl: string | null;
+  submittedForReviewAt: string | null;
+  user: { fullName: string; email: string };
+  department: { name: string };
+}
+
+export interface UpcomingRound {
+  jobTitle: string;
+  company?: string;
+  sequence: number;
+  type: InterviewRoundType;
+  scheduledAt: string;
+  where: string | null;
+  candidates?: number;
+}
+
+export interface CollegeOverview {
+  headline: {
+    studentsTotal: number;
+    placementReady: number;
+    placed: number;
+    placedPercent: number;
+    activeDrives: number;
+    applications: number;
+  };
+  packages: { highest: number | null; average: number | null; offersWithPackage: number };
+  offerAcceptance: number | null;
+  funnel: { stage: ApplicationStatus; count: number }[];
+  topCompanies: { name: string; offers: number }[];
+  actionable: {
+    jobsAwaitingApproval: number;
+    resultsAwaitingRelease: number;
+    profilesAwaitingReview: number;
+    recruitersAwaitingApproval: number;
+  };
+}
+
+export interface StudentOverview {
+  placementReady: boolean;
+  hasResume: boolean;
+  skillCount: number;
+  openDrives: number;
+  applications: { total: number; active: number; interviewing: number; offers: number };
+  upcoming: UpcomingRound[];
+}
+
+export interface RecruiterOverview {
+  jobs: { total: number; published: number; pendingApproval: number };
+  applications: { total: number; needsAction: number; shortlisted: number; selected: number };
+  upcoming: UpcomingRound[];
+}
+
+export type NotificationType =
+  | 'JOB_PUBLISHED'
+  | 'APPLICATION_RECEIVED'
+  | 'STATUS_CHANGED'
+  | 'INTERVIEW_SCHEDULED'
+  | 'RESULT_RELEASED'
+  | 'JOB_PENDING_APPROVAL'
+  | 'ENDORSEMENT_RECEIVED'
+  | 'PROFILE_APPROVED';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
 /** Turns SCREAMING_SNAKE enums into display text. */
 export function humanize(value: string): string {
   return value

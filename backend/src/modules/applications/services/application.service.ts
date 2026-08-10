@@ -1,7 +1,9 @@
-import { ApplicationStatus, JobStatus, Role } from '@prisma/client';
+import { ApplicationStatus, JobStatus, NotificationType, Role } from '@prisma/client';
 import { prisma } from '@/config/prisma';
 import { AppError } from '@/middleware/error-handler';
 import { RequestContext } from '@/types/request-context';
+import { notificationService } from '@/modules/notifications/services/notification.service';
+import { humanizeStatus, statusMessage } from './status-labels';
 import { evaluate } from '@/modules/jobs/services/eligibility-engine';
 import { toFacts, toRules } from '@/modules/jobs/services/job.service';
 import { canTransition, allowedNext } from './state-machine';
@@ -47,7 +49,7 @@ export const applicationService = {
 
     // Snapshot + first ledger row are written together — an application must
     // never exist without its opening history entry.
-    return prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx) => {
       const application = await tx.application.create({
         data: {
           jobId,
@@ -70,6 +72,21 @@ export const applicationService = {
 
       return application;
     });
+
+    const company = await prisma.company.findUnique({
+      where: { id: job.companyId },
+      select: { name: true },
+    });
+
+    await notificationService.dispatch({
+      userId: job.postedByUserId,
+      type: NotificationType.APPLICATION_RECEIVED,
+      title: `New applicant for ${job.title}`,
+      body: `A student at ${company?.name ?? 'your target college'} applied.`,
+      link: `/hr/jobs/${job.id}/pipeline`,
+    });
+
+    return created;
   },
 
   /**
@@ -81,6 +98,7 @@ export const applicationService = {
     to: ApplicationStatus,
     ctx: RequestContext,
     note?: string,
+    options?: { suppressStudentNotification?: boolean },
   ) {
     const application = await prisma.application.findUnique({ where: { id: applicationId } });
     if (!application || application.deletedAt) {
@@ -96,8 +114,8 @@ export const applicationService = {
       );
     }
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.application.update({
+    const updated = await prisma.$transaction(async (tx) => {
+      const app = await tx.application.update({
         where: { id: applicationId },
         data: { status: to },
       });
@@ -112,7 +130,35 @@ export const applicationService = {
         },
       });
 
-      return updated;
+      return app;
+    });
+
+    // Interview outcomes stay quiet until the officer releases them — telling
+    // the student now would defeat the whole gate. Everything else notifies.
+    if (!options?.suppressStudentNotification) {
+      await this.notifyStudentOfStatus(applicationId, to);
+    }
+
+    return updated;
+  },
+
+  /** Sent after a transition the student is allowed to see. */
+  async notifyStudentOfStatus(applicationId: string, status: ApplicationStatus) {
+    const app = await prisma.application.findUnique({
+      where: { id: applicationId },
+      include: {
+        job: { include: { company: { select: { name: true } } } },
+        student: { select: { userId: true } },
+      },
+    });
+    if (!app) return;
+
+    await notificationService.dispatch({
+      userId: app.student.userId,
+      type: NotificationType.STATUS_CHANGED,
+      title: humanizeStatus(status),
+      body: statusMessage(status, app.job.title, app.job.company.name),
+      link: '/student/applications',
     });
   },
 
@@ -269,8 +315,19 @@ export const applicationService = {
       throw new AppError(409, 'ALREADY_RECOMMENDED', 'You have already endorsed this candidate');
     }
 
-    return prisma.alumniRecommendation.create({
+    const recommendation = await prisma.alumniRecommendation.create({
       data: { applicationId, alumniUserId: ctx.userId, note },
+      include: { alumni: { select: { fullName: true } } },
     });
+
+    await notificationService.dispatch({
+      userId: application.job.postedByUserId,
+      type: NotificationType.ENDORSEMENT_RECEIVED,
+      title: `${recommendation.alumni.fullName} endorsed a candidate`,
+      body: `An alumnus vouched for an applicant on "${application.job.title}".`,
+      link: `/hr/jobs/${application.jobId}/pipeline`,
+    });
+
+    return recommendation;
   },
 };
